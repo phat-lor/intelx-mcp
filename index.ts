@@ -27,6 +27,8 @@ import {
   getNormalizedId,
   normalizePhoneBookResponse,
   normalizeSearchRecordResponse,
+  normalizeAccountRecords,
+  normalizeSelectors,
 } from "./lib/postprocess.js";
 
 const INTELX_API_KEY = process.env.INTELX_API_KEY;
@@ -84,27 +86,28 @@ PARAMETERS:
 - buckets: Array of bucket names (leave empty for all buckets)
   AVAILABLE BUCKETS: darknet, dns, documents.public, dumpster, leaks.logs,
   leaks.private, leaks.public, pastes, usenet, web.gov.ru, web.public, whois
-  Example: ["pastes", "darknet", "leaks.public"]
+  Example: "pastes,darknet,leaks.public"
 - timeout: Search timeout in seconds (default: 5)
 - datefrom/dateto: Date range "YYYY-MM-DD HH:MM:SS"
 - sort: 0=none, 1=score_asc, 2=score_desc, 3=date_asc, 4=date_desc (default: 4)
-- media: Filter by media type 0-25 (0=all, 1=paste, 15=PDF, 16=Word, etc.)
 
 NOTE: Invalid bucket names will cause a 401 error. Use empty array [] to search all buckets.`,
     inputSchema: {
       term: z.string(),
       maxresults: z.number().optional(),
-      buckets: z.array(z.string()).optional(),
+      buckets: z.string().optional(),
       timeout: z.number().optional(),
       datefrom: z.string().optional(),
       dateto: z.string().optional(),
       sort: z.number().optional(),
-      media: z.number().optional(),
-      terminate: z.array(z.string()).optional(),
     },
   },
   async (params) => {
+    // @ts-ignore
+    params.buckets = params.buckets?.split(",") || [];
+
     const validated = intelligentSearchSchema.parse(params);
+
     const results = await intelxClient
       .search(validated)
       .then(normalizeSearchRecordResponse)
@@ -130,13 +133,11 @@ server.registerTool(
 
 USE CASES:
 - Find all email addresses associated with a domain
-- Find all domains associated with an email
 - Find all URLs containing a domain
 - Discover related selectors
 
 SEARCH TERM EXAMPLES:
-- Domain: "example.com" or "*.example.com"
-- Email: "user@example.com"
+- Domain: "example.com"
 - Partial email: "@example.com" to find all emails in domain
 - URL: "https://example.com"
 
@@ -150,13 +151,11 @@ PARAMETERS:
 - maxresults: Max results to return (default: 100)
 - buckets: Optional bucket filter (leave empty for all)
   Available: darknet, dns, documents.public, dumpster, leaks.logs, leaks.private,
-  leaks.public, pastes, usenet, web.gov.ru, web.public, whois
-- timeout: Search timeout in seconds (default: 5)`,
+  leaks.public, pastes, usenet, web.gov.ru, web.public, whois`,
     inputSchema: {
       term: z.string(),
       maxresults: z.number().optional(),
       buckets: z.array(z.string()).optional(),
-      timeout: z.number().optional(),
       target: z.enum(["all", "domains", "emails", "urls"]).optional(),
     },
   },
@@ -213,7 +212,7 @@ server.registerTool(
     description: `Preview first N lines of a file from Intelligence X search results.
 
 REQUIRED FROM SEARCH RESULTS:
-- storage_id: The "storageid" field from search result
+- storage_id: The "storage_id" field from search result
 - bucket: The "bucket" field from search result
 - media_type: The "media" field from search result
 - content_type: The "type" field from search result
@@ -224,7 +223,7 @@ PARAMETERS:
 
 USE CASE: Quick preview of file contents before full download`,
     inputSchema: {
-      storage_id: z.string(),
+      storage_id: z.number(),
       bucket: z.string(),
       media_type: z.number(),
       content_type: z.number(),
@@ -237,8 +236,8 @@ USE CASE: Quick preview of file contents before full download`,
     const formatValue = validated.format === "picture" ? 1 : 0;
 
     const originalStorageId = getOriginalUuid(
-      "storageid",
-      +validated.storage_id,
+      "storage_id",
+      validated.storage_id,
     );
     if (!originalStorageId) {
       throw new Error(`Invalid storage_id: ${validated.storage_id}`);
@@ -253,8 +252,12 @@ USE CASE: Quick preview of file contents before full download`,
         validated.lines,
         formatValue,
       )
-      .then(normalizeIntelxId);
-
+      .then((result) => {
+        if (result.length > 4096) {
+          return result.slice(0, 4096) + "...";
+        }
+        return result;
+      });
     return {
       content: [{ type: "text", text: JSON.stringify(preview, null, 2) }],
     };
@@ -276,14 +279,14 @@ AUTOMATIC CONVERSIONS:
 - Ebook (media=25) → Plain text
 
 REQUIRED FROM SEARCH RESULTS:
-- storage_id: The "storageid" field
-- bucket: The "bucket" field
-- media_type: The "media" field
-- content_type: The "type" field
+- storage_id: The "storage_id" field from search result
+- bucket: The "bucket" field from search result
+- media_type: The "media" field from search result
+- content_type: The "type" field from search result
 
 USE CASE: Read full document content in human-readable format`,
     inputSchema: {
-      storage_id: z.string(),
+      storage_id: z.number(),
       bucket: z.string(),
       media_type: z.number(),
       content_type: z.number(),
@@ -291,11 +294,12 @@ USE CASE: Read full document content in human-readable format`,
   },
   async (params) => {
     const validated = fileViewSchema.parse(params);
-
+    console.log(validated);
     const originalStorageId = getOriginalUuid(
-      "storageid",
-      +validated.storage_id,
+      "storage_id",
+      validated.storage_id,
     );
+    console.log("originalStorageId", originalStorageId);
     if (!originalStorageId) {
       throw new Error(`Invalid storage_id: ${validated.storage_id}`);
     }
@@ -307,7 +311,12 @@ USE CASE: Read full document content in human-readable format`,
         validated.media_type,
         validated.content_type,
       )
-      .then(normalizeIntelxId);
+      .then((result) => {
+        if (result.length > 4096) {
+          return result.slice(0, 4096) + "...";
+        }
+        return result;
+      });
 
     return {
       content: [{ type: "text", text: JSON.stringify(content, null, 2) }],
@@ -315,54 +324,54 @@ USE CASE: Read full document content in human-readable format`,
   },
 );
 
-server.registerTool(
-  "intelx_file_read",
-  {
-    title: "File Read",
-    description: `Download raw binary file contents from Intelligence X.
+// server.registerTool(
+//   "intelx_file_read",
+//   {
+//     title: "File Read",
+//     description: `Download raw binary file contents from Intelligence X.
 
-REQUIRED FROM SEARCH RESULTS:
-- system_id: The "systemid" field from search result
-- bucket: The "bucket" field from search result
+// REQUIRED FROM SEARCH RESULTS:
+// - system_id: The "system_id" field from search result
+// - bucket: The "bucket" field from search result
 
-RETURNS: Base64 encoded binary data
+// RETURNS: Base64 encoded binary data
 
-USE CASE: Download original file (images, PDFs, executables, etc.) without conversion`,
-    inputSchema: {
-      system_id: z.string(),
-      bucket: z.string(),
-      filename: z.string().optional(),
-    },
-  },
-  async (params) => {
-    const validated = fileReadSchema.parse(params);
+// USE CASE: Download original file (images, PDFs, executables, etc.) without conversion`,
+//     inputSchema: {
+//       system_id: z.number(),
+//       bucket: z.string(),
+//       filename: z.string().optional(),
+//     },
+//   },
+//   async (params) => {
+//     const validated = fileReadSchema.parse(params);
 
-    const originalSystemId = getOriginalUuid("systemid", +validated.system_id);
-    if (!originalSystemId) {
-      throw new Error(`Invalid system_id: ${validated.system_id}`);
-    }
+//     const originalSystemId = getOriginalUuid("system_id", validated.system_id);
+//     if (!originalSystemId) {
+//       throw new Error(`Invalid system_id: ${validated.system_id}`);
+//     }
 
-    const data = await intelxClient
-      .fileRead(originalSystemId, validated.bucket)
-      .then(normalizeIntelxId);
+//     const data = await intelxClient
+//       .fileRead(originalSystemId, validated.bucket)
+//       .then(normalizeIntelxId);
 
-    const buffer = Buffer.from(data);
-    const base64 = buffer.toString("base64");
+//     const buffer = Buffer.from(data);
+//     const base64 = buffer.toString("base64");
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `File downloaded (${buffer.length} bytes). Base64: ${base64.substring(0, 100)}...`,
-        },
-      ],
-      structuredContent: {
-        size: buffer.length,
-        base64: base64,
-      },
-    };
-  },
-);
+//     return {
+//       content: [
+//         {
+//           type: "text",
+//           text: `File downloaded (${buffer.length} bytes). Base64: ${base64.substring(0, 100)}...`,
+//         },
+//       ],
+//       structuredContent: {
+//         size: buffer.length,
+//         base64: base64,
+//       },
+//     };
+//   },
+// );
 
 server.registerTool(
   "intelx_file_treeview",
@@ -378,7 +387,7 @@ USE CASES:
 
 REQUIRED:
 - bucket: The "bucket" field from search result
-- storage_id OR system_id: Use "indexfile" or "historyfile" field for archives, or "storageid"/"systemid" for containers
+- storage_id OR system_id: Use "indexfile" or "historyfile" field for archives, or "storage_id"/"system_id" for containers
 
 RETURNS: JSON array of related items with metadata (name, date, size, media type)
 
@@ -389,8 +398,8 @@ WORKFLOW:
 4. Browse related files in the tree`,
     inputSchema: {
       bucket: z.string(),
-      storage_id: z.string().optional(),
-      system_id: z.string().optional(),
+      storage_id: z.number().optional(),
+      system_id: z.number().optional(),
     },
   },
   async (params) => {
@@ -398,7 +407,7 @@ WORKFLOW:
 
     let originalStorageId: string | undefined;
     if (validated.storage_id) {
-      originalStorageId = getOriginalUuid("storageid", +validated.storage_id);
+      originalStorageId = getOriginalUuid("storage_id", validated.storage_id);
       if (!originalStorageId) {
         throw new Error(`Invalid storage_id: ${validated.storage_id}`);
       }
@@ -406,7 +415,7 @@ WORKFLOW:
 
     let originalSystemId: string | undefined;
     if (validated.system_id) {
-      originalSystemId = getOriginalUuid("systemid", +validated.system_id);
+      originalSystemId = getOriginalUuid("system_id", validated.system_id);
       if (!originalSystemId) {
         throw new Error(`Invalid system_id: ${validated.system_id}`);
       }
@@ -444,26 +453,26 @@ EXTRACTS:
 - And more...
 
 REQUIRED:
-- system_id: The "systemid" field from search result
+- system_id: The "system_id" field from search result
 
-RETURNS: Array of {type, value} objects for each selector found
+RETURNS: Array of each selector found
 
 USE CASE: Discover related identifiers in a document to search for additional context`,
     inputSchema: {
-      system_id: z.string(),
+      system_id: z.number(),
     },
   },
   async (params) => {
     const validated = getSelectorsSchema.parse(params);
 
-    const originalSystemId = getOriginalUuid("systemid", +validated.system_id);
+    const originalSystemId = getOriginalUuid("system_id", validated.system_id);
     if (!originalSystemId) {
       throw new Error(`Invalid system_id: ${validated.system_id}`);
     }
 
     const selectors = await intelxClient
       .getSelectors(originalSystemId)
-      .then(normalizeIntelxId);
+      .then(normalizeSelectors);
 
     return {
       content: [
@@ -505,24 +514,28 @@ server.registerTool(
   "intelx_identity_search",
   {
     title: "Identity Search",
-    description: `Search identity/breach database for compromised data.
+    description: `Search the IntelX Identity Portal (a specialized breach and identity intelligence database) for compromised data using domain-level wildcard search (recommended for efficiency). This tool leverages IntelX's advanced reverse lookup capabilities to identify leaked credentials, accounts, and other sensitive information associated with the specified domain and its subdomains.
 
 SEARCH TERMS:
-- Email: user@example.com
-- Domain: example.com (finds all emails in domain)
-- Partial: @example.com (all emails in domain)
+- Domain: set.or.th
 
 PARAMETERS:
-- selector: Email or domain to search (REQUIRED)
-- maxresults: Max results (default: 100)
-- buckets: Optional bucket filter (comma-separated)
-- datefrom/dateto: Date range "YYYY-MM-DD HH:MM:SS"
-- analyze: Include breach analysis (default: false)
-- skip_invalid: Skip invalid results (default: false)
+- selector: Domain to search (REQUIRED; supports wildcard for subdomains, e.g., "set.or.th" automatically includes *.set.or.th)
+- maxresults: Max results (default: 100, increase to 500+ for full domain scans)
+- buckets: Optional bucket filter (comma-separated; e.g., "leaks.private.general,leaks.public.general" for breach-focused results)
+- datefrom/dateto: Date range "YYYY-MM-DD HH:MM:SS" (filters results by leak date)
+- analyze: Include breach analysis (default: false; provides summary insights on leak sources and severity)
+- skip_invalid: Skip invalid results (default: false; filters out malformed or irrelevant entries)
 
-RETURNS: Array of breach records with systemid, storageid, filename, and line data
+RETURNS: Array of breach records, each containing:
+- system_id: Unique identifier for the leak source
+- storage_id: Internal storage reference
+- filename: Name of the leaked file or log
+- line data: List of all lines where the search term (domain or related selectors) appears in the results, including highlighted matches for emails, passwords, usernames, or other compromised data
 
-USE CASE: Find data breaches, leaked credentials, compromised accounts`,
+USE CASE: Efficiently find data breaches, leaked credentials, and compromised accounts across an entire organization (e.g., all subdomains of set.or.th) with minimal API calls. Ideal for security teams monitoring for exposed PII or authentication details in stealer logs, paste sites, and dark web leaks.
+
+NOTE: Each line will limited to 64 characters. If you have interest in these file use intelx_file_read tool`,
     inputSchema: {
       selector: z.string(),
       maxresults: z.number().optional(),
@@ -553,64 +566,65 @@ USE CASE: Find data breaches, leaked credentials, compromised accounts`,
   },
 );
 
-server.registerTool(
-  "intelx_export_accounts",
-  {
-    title: "Export Leaked Accounts",
-    description: `Export leaked usernames and passwords from breaches.
+// server.registerTool(
+//   "intelx_export_accounts",
+//   {
+//     title: "Export Leaked Accounts",
+//     description: `Export leaked usernames and passwords from breaches.
 
-SEARCH TERMS:
-- Email: user@example.com
-- Domain: example.com (all accounts in domain)
-- Partial: @example.com (all accounts in domain)
+// SEARCH TERMS:
+// - Email: user@example.com
+// - Domain: example.com (all accounts in domain)
+// - Partial: @example.com (all accounts in domain)
 
-PARAMETERS:
-- selector: Email or domain (REQUIRED)
-- maxresults: Max accounts to export (default: 100)
-- buckets: Optional bucket filter
-- datefrom/dateto: Date range "YYYY-MM-DD HH:MM:SS"
+// PARAMETERS:
+// - selector: Email or domain (REQUIRED)
+// - maxresults: Max accounts to export (default: 100)
+// - buckets: Optional bucket filter
+// - datefrom/dateto: Date range "YYYY-MM-DD HH:MM:SS"
 
-RETURNS: Array of {user, password, passwordtype, sourceshort}
-- user: Username/email
-- password: Plaintext or hash
-- passwordtype: "plaintext", "md5", "sha1", "bcrypt", etc.
-- sourceshort: Breach source name
+// RETURNS: Array of {user, password, passwordtype, sourceshort}
+// - user: Username/email
+// - password: Plaintext or hash
+// - passwordtype: "plaintext", "md5", "sha1", "bcrypt", etc.
+// - sourceshort: Breach source name
 
-WARNING: Contains sensitive credential data. Handle responsibly.`,
-    inputSchema: {
-      selector: z.string(),
-      maxresults: z.number().optional(),
-      buckets: z.string().optional(),
-      datefrom: z.string().optional(),
-      dateto: z.string().optional(),
-      terminate: z.array(z.string()).optional(),
-    },
-  },
-  async (params) => {
-    const validated = exportAccountsSchema.parse(params);
+// WARNING: Contains sensitive credential data. Handle responsibly.`,
+//     inputSchema: {
+//       selector: z.string(),
+//       maxresults: z.number().optional(),
+//       buckets: z.string().optional(),
+//       datefrom: z.string().optional(),
+//       dateto: z.string().optional(),
+//       terminate: z.array(z.string()).optional(),
+//     },
+//   },
+//   async (params) => {
+//     const validated = exportAccountsSchema.parse(params);
 
-    const accounts = await identityClient
-      .exportAccounts(
-        validated.selector,
-        validated.maxresults,
-        validated.buckets,
-        validated.datefrom,
-        validated.dateto,
-        validated.terminate,
-      )
-      .then(normalizeIntelxId);
+//     const accounts = await identityClient
+//       .exportAccounts(
+//         validated.selector,
+//         validated.maxresults,
+//         validated.buckets,
+//         validated.datefrom,
+//         validated.dateto,
+//         validated.terminate,
+//       )
+//       .then(normalizeAccountRecords)
+//       .then(normalizeIntelxId);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(accounts, null, 2),
-        },
-      ],
-      structuredContent: { accounts } as Record<string, unknown>,
-    };
-  },
-);
+//     return {
+//       content: [
+//         {
+//           type: "text",
+//           text: JSON.stringify(accounts, null, 2),
+//         },
+//       ],
+//       structuredContent: { accounts } as Record<string, unknown>,
+//     };
+//   },
+// );
 
 server.registerResource(
   "search",
@@ -655,7 +669,7 @@ server.registerResource(
     }
 
     const data = await intelxClient.fileRead(
-      getOriginalUuid("systemid", +systemId) as string,
+      getOriginalUuid("system_id", +systemId) as string,
       bucket as string,
     );
     const buffer = Buffer.from(data);
@@ -693,7 +707,7 @@ server.registerResource(
     const tree = await intelxClient
       .fileTreeView(
         bucket as string,
-        getOriginalUuid("storageid", +storageId) as string,
+        getOriginalUuid("storage_id", +storageId) as string,
       )
       .then(normalizeIntelxId);
 

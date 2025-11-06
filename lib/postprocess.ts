@@ -1,15 +1,18 @@
 import type {
+  AccountNormalizedRecord,
+  AccountRecord,
   IdentityNormalizedRecord,
   IdentityRecord,
   PhonebookResultResponse,
   PhonebookSelectorNormalized,
   SearchRecordNormalized,
   SearchResultResponse,
+  Selector,
 } from "./types";
 
 const TRANSITION_FIELDS = [
-  "systemid",
-  "storageid",
+  "system_id",
+  "storage_id",
   "owner",
   "indexfile",
   "group",
@@ -108,38 +111,75 @@ function getNormalizedId(
 function normalizeIdentityRecords(
   allRecords: IdentityRecord[],
 ): IdentityNormalizedRecord[] {
-  const normalizedRecords = allRecords.map((record) => ({
+  let mergedByStorageId: Record<string, IdentityNormalizedRecord> = {};
+  let normalizedRecords = allRecords.map((record) => ({
     line: record.linea,
-    systemid: record.item.systemid,
-    storageid: record.item.storageid,
+    system_id: record.item.systemid,
+    storage_id: record.item.storageid,
+    bucket: record.item.bucket,
     filename: record.item.name,
     date: record.item.date,
   }));
+  normalizedRecords.forEach((record) => {
+    if (!mergedByStorageId[record.storage_id])
+      mergedByStorageId[record.storage_id] = { ...record, line: "" };
+
+    mergedByStorageId[record.storage_id]!.line += "\n" + record.line;
+  });
+
+  normalizedRecords = Object.values(mergedByStorageId);
+
+  normalizedRecords = normalizedRecords.map((record) => {
+    let line = record.line.trim();
+
+    if (line.length > 128) {
+      line = line.slice(0, 128) + `...(More ${line.length - 128} characters)`;
+    }
+    return {
+      ...record,
+      line,
+    };
+  });
 
   return normalizeIntelxId(normalizedRecords);
 }
 
 function normalizePhoneBookResponse(
   allRecords: PhonebookResultResponse[],
-): PhonebookSelectorNormalized[] {
+): string[] {
   return allRecords.flatMap((response) =>
-    response.selectors.map((record) => ({
-      type: record.selectortype,
-      value: record.selectorvalue,
-    })),
+    response.selectors.map((record) => record.selectorvalue),
   );
+}
+
+function normalizeSelectors(allRecords: Selector[]): string[] {
+  return allRecords.map((record) => record.selector);
+}
+function normalizeAccountRecords(
+  allRecords: AccountRecord[],
+): AccountNormalizedRecord[] {
+  return allRecords.map((record) => ({
+    user: record.user,
+    password: record.password,
+    passwordtype: record.passwordtype,
+    source: record.sourcelong,
+    system_id: record.systemid,
+
+    date: record.date,
+    added: record.added,
+  }));
 }
 
 function normalizeSearchRecordResponse(
   response: SearchResultResponse,
 ): SearchRecordNormalized[] {
   return response.records.map((record) => ({
-    systemid: record.systemid,
+    system_id: record.systemid,
     bucket: record.bucket,
     name: record.name,
 
     indexfile: record.indexfile,
-    storageid: record.storageid,
+    storage_id: record.storageid,
     media: record.media,
     type: record.type,
 
@@ -152,6 +192,8 @@ export {
   normalizeSearchRecordResponse,
   normalizePhoneBookResponse,
   normalizeIdentityRecords,
+  normalizeAccountRecords,
+  normalizeSelectors,
   normalizeIntelxId,
   denormalizeIntelxId,
   getOriginalUuid,
