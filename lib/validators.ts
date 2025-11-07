@@ -31,8 +31,8 @@ export const terminateSearchSchema = z.object({
 export const filePreviewSchema = z.object({
   storage_id: z.number().min(1, "Storage ID is required"),
   bucket: z.string().min(1, "Bucket is required"),
-  media_type: z.number().int().min(0),
-  content_type: z.number().int().min(0),
+  media: z.number().int().min(0),
+  type: z.number().int().min(0),
   lines: z.number().int().positive().default(8),
   format: z.enum(["text", "picture"]).default("text"),
 });
@@ -40,8 +40,8 @@ export const filePreviewSchema = z.object({
 export const fileViewSchema = z.object({
   storage_id: z.number().min(1, "Storage ID is required"),
   bucket: z.string().min(1, "Bucket is required"),
-  media_type: z.number().int().min(0),
-  content_type: z.number().int().min(0),
+  media: z.number().int().min(0),
+  type: z.number().int().min(0),
 });
 
 export const fileReadSchema = z.object({

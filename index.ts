@@ -103,25 +103,102 @@ NOTE: Invalid bucket names will cause a 401 error. Use empty array [] to search 
     },
   },
   async (params) => {
-    // @ts-ignore
-    params.buckets = params.buckets?.split(",") || [];
+    try {
+      // @ts-ignore
+      params.buckets = params.buckets?.split(",") || [];
 
-    const validated = intelligentSearchSchema.parse(params);
+      const validated = intelligentSearchSchema.parse(params);
 
-    const results = await intelxClient
-      .search(validated)
-      .then(normalizeSearchRecordResponse)
-      .then(normalizeIntelxId);
+      // Validate term format - should be a strong selector
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(validated.term);
+      const isDomain =
+        /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/i.test(
+          validated.term,
+        );
+      const isUrl = /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(validated.term);
+      const isIPv4 =
+        /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(
+          validated.term,
+        );
+      const isIPv6 = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/.test(
+        validated.term,
+      );
+      const isCIDR =
+        /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\/(?:[0-9]|[1-2][0-9]|3[0-2])$/.test(
+          validated.term,
+        );
+      const isPhone = /^\+?[1-9]\d{1,14}$/.test(validated.term);
+      const isBitcoin = /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(
+        validated.term,
+      );
+      const isMAC = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(
+        validated.term,
+      );
+      const isIPFS = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(validated.term);
+      const isUUID =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          validated.term,
+        );
+      const isCreditCard =
+        /^(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})$/.test(
+          validated.term,
+        );
+      const isIBAN =
+        /^[A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7}([A-Z0-9]?){0,16}$/.test(
+          validated.term,
+        );
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(results, null, 2),
-        },
-      ],
-      structuredContent: { results } as Record<string, unknown>,
-    };
+      if (
+        !isEmail &&
+        !isDomain &&
+        !isUrl &&
+        !isIPv4 &&
+        !isIPv6 &&
+        !isCIDR &&
+        !isPhone &&
+        !isBitcoin &&
+        !isMAC &&
+        !isIPFS &&
+        !isUUID &&
+        !isCreditCard &&
+        !isIBAN
+      ) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error: term should be a strong selector (email, domain, URL, IP address, phone, bitcoin address, etc.)",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const results = await intelxClient
+        .search(validated)
+        .then(normalizeSearchRecordResponse)
+        .then(normalizeIntelxId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(results),
+          },
+        ],
+        structuredContent: { results } as Record<string, unknown>,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -155,26 +232,62 @@ PARAMETERS:
     inputSchema: {
       term: z.string(),
       maxresults: z.number().optional(),
-      buckets: z.array(z.string()).optional(),
+      buckets: z.string().optional(),
       target: z.enum(["all", "domains", "emails", "urls"]).optional(),
     },
   },
   async (params) => {
-    const validated = phonebookSearchSchema.parse(params);
+    try {
+      // @ts-ignore
+      params.buckets = params.buckets?.split(",") || [];
 
-    const results = await intelxClient
-      .phonebookSearchComplete(validated)
-      .then(normalizePhoneBookResponse);
+      const validated = phonebookSearchSchema.parse(params);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(results, null, 2),
-        },
-      ],
-      structuredContent: { results } as Record<string, unknown>,
-    };
+      // Validate term format - should be domain, email, or URL
+      const isDomain =
+        /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/i.test(
+          validated.term,
+        );
+      const isEmail = /^([^\s@]|)+@[^\s@]+\.[^\s@]+$/.test(validated.term);
+      const isUrl = /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(validated.term);
+      console.log(isDomain, isEmail, isUrl);
+
+      if (!isDomain && !isEmail && !isUrl) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error: term should be a strong selector (email, domain, URL)",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const results = await intelxClient
+        .phonebookSearchComplete(validated)
+        .then(normalizePhoneBookResponse);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: results.join(" "),
+          },
+        ],
+        structuredContent: { results } as Record<string, unknown>,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -188,20 +301,32 @@ server.registerTool(
     },
   },
   async (params) => {
-    const validated = terminateSearchSchema.parse(params);
-    const success = await intelxClient.terminateSearch(validated.search_id);
+    try {
+      const validated = terminateSearchSchema.parse(params);
+      const success = await intelxClient.terminateSearch(validated.search_id);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: success
-            ? "Search terminated successfully"
-            : "Failed to terminate search",
-        },
-      ],
-      structuredContent: { success },
-    };
+      return {
+        content: [
+          {
+            type: "text",
+            text: success
+              ? "Search terminated successfully"
+              : "Failed to terminate search",
+          },
+        ],
+        structuredContent: { success },
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -214,8 +339,8 @@ server.registerTool(
 REQUIRED FROM SEARCH RESULTS:
 - storage_id: The "storage_id" field from search result
 - bucket: The "bucket" field from search result
-- media_type: The "media" field from search result
-- content_type: The "type" field from search result
+- media: The "media" field from search result
+- type: The "type" field from search result
 
 PARAMETERS:
 - lines: Number of lines to preview (default: 8)
@@ -225,104 +350,144 @@ USE CASE: Quick preview of file contents before full download`,
     inputSchema: {
       storage_id: z.number(),
       bucket: z.string(),
-      media_type: z.number(),
-      content_type: z.number(),
+      media: z.number(),
+      type: z.number(),
       lines: z.number().optional(),
       format: z.enum(["text", "picture"]).optional(),
     },
   },
   async (params) => {
-    const validated = filePreviewSchema.parse(params);
-    const formatValue = validated.format === "picture" ? 1 : 0;
+    try {
+      const validated = filePreviewSchema.parse(params);
+      const formatValue = validated.format === "picture" ? 1 : 0;
 
-    const originalStorageId = getOriginalUuid(
-      "storage_id",
-      validated.storage_id,
-    );
-    if (!originalStorageId) {
-      throw new Error(`Invalid storage_id: ${validated.storage_id}`);
+      const originalStorageId = getOriginalUuid(
+        "storage_id",
+        validated.storage_id,
+      );
+      if (!originalStorageId) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: Invalid storage_id: ${validated.storage_id}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const preview = await intelxClient
+        .filePreview(
+          originalStorageId,
+          validated.bucket,
+          validated.media,
+          validated.type,
+          validated.lines,
+          formatValue,
+        )
+        .then((result) => {
+          if (result.length > 4096) {
+            return result.slice(0, 4096) + "...";
+          }
+          return result;
+        });
+      return {
+        content: [{ type: "text", text: JSON.stringify(preview) }],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+          },
+        ],
+        isError: true,
+      };
     }
-
-    const preview = await intelxClient
-      .filePreview(
-        originalStorageId,
-        validated.bucket,
-        validated.media_type,
-        validated.content_type,
-        validated.lines,
-        formatValue,
-      )
-      .then((result) => {
-        if (result.length > 4096) {
-          return result.slice(0, 4096) + "...";
-        }
-        return result;
-      });
-    return {
-      content: [{ type: "text", text: JSON.stringify(preview, null, 2) }],
-    };
   },
 );
 
-server.registerTool(
-  "intelx_file_view",
-  {
-    title: "File View",
-    description: `View full file contents with automatic format conversion.
+// server.registerTool(
+//   "intelx_file_view",
+//   {
+//     title: "File View",
+//     description: `View full file contents with automatic format conversion.
 
-AUTOMATIC CONVERSIONS:
-- PDF (media=15) → Plain text
-- Word (media=16) → Plain text
-- Excel (media=17) → Plain text
-- PowerPoint (media=18) → Plain text
-- HTML (media=9,23) → Plain text
-- Ebook (media=25) → Plain text
+// AUTOMATIC CONVERSIONS:
+// - PDF (media=15) → Plain text
+// - Word (media=16) → Plain text
+// - Excel (media=17) → Plain text
+// - PowerPoint (media=18) → Plain text
+// - HTML (media=9,23) → Plain text
+// - Ebook (media=25) → Plain text
 
-REQUIRED FROM SEARCH RESULTS:
-- storage_id: The "storage_id" field from search result
-- bucket: The "bucket" field from search result
-- media_type: The "media" field from search result
-- content_type: The "type" field from search result
+// REQUIRED FROM SEARCH RESULTS:
+// - storage_id: The "storage_id" field from search result
+// - bucket: The "bucket" field from search result
+// - media: The "media" field from search result
+// - type: The "type" field from search result
 
-USE CASE: Read full document content in human-readable format`,
-    inputSchema: {
-      storage_id: z.number(),
-      bucket: z.string(),
-      media_type: z.number(),
-      content_type: z.number(),
-    },
-  },
-  async (params) => {
-    const validated = fileViewSchema.parse(params);
-    console.log(validated);
-    const originalStorageId = getOriginalUuid(
-      "storage_id",
-      validated.storage_id,
-    );
-    console.log("originalStorageId", originalStorageId);
-    if (!originalStorageId) {
-      throw new Error(`Invalid storage_id: ${validated.storage_id}`);
-    }
+// USE CASE: Read full document content in human-readable format`,
+//     inputSchema: {
+//       storage_id: z.number(),
+//       bucket: z.string(),
+//       media: z.number(),
+//       type: z.number(),
+//     },
+//   },
+//   async (params) => {
+//     try {
+//       const validated = fileViewSchema.parse(params);
+//       console.log(validated);
+//       const originalStorageId = getOriginalUuid(
+//         "storage_id",
+//         validated.storage_id,
+//       );
+//       console.log("originalStorageId", originalStorageId);
+//       if (!originalStorageId) {
+//         return {
+//           content: [
+//             {
+//               type: "text",
+//               text: `Error: Invalid storage_id: ${validated.storage_id}`,
+//             },
+//           ],
+//           isError: true,
+//         };
+//       }
 
-    const content = await intelxClient
-      .fileView(
-        originalStorageId,
-        validated.bucket,
-        validated.media_type,
-        validated.content_type,
-      )
-      .then((result) => {
-        if (result.length > 4096) {
-          return result.slice(0, 4096) + "...";
-        }
-        return result;
-      });
+//       const content = await intelxClient
+//         .fileView(
+//           originalStorageId,
+//           validated.bucket,
+//           validated.media,
+//           validated.type,
+//         )
+//         .then((result) => {
+//           if (result.length > 4096) {
+//             return result.slice(0, 4096) + "...";
+//           }
+//           return result;
+//         });
 
-    return {
-      content: [{ type: "text", text: JSON.stringify(content, null, 2) }],
-    };
-  },
-);
+//       return {
+//         content: [{ type: "text", text: JSON.stringify(content) }],
+//       };
+//     } catch (error) {
+//       return {
+//         content: [
+//           {
+//             type: "text",
+//             text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+//           },
+//         ],
+//         isError: true,
+//       };
+//     }
+//   },
+// );
 
 // server.registerTool(
 //   "intelx_file_read",
@@ -403,37 +568,65 @@ WORKFLOW:
     },
   },
   async (params) => {
-    const validated = fileTreeViewSchema.parse(params);
+    try {
+      const validated = fileTreeViewSchema.parse(params);
 
-    let originalStorageId: string | undefined;
-    if (validated.storage_id) {
-      originalStorageId = getOriginalUuid("storage_id", validated.storage_id);
-      if (!originalStorageId) {
-        throw new Error(`Invalid storage_id: ${validated.storage_id}`);
+      let originalStorageId: string | undefined;
+      if (validated.storage_id) {
+        originalStorageId = getOriginalUuid("storage_id", validated.storage_id);
+        if (!originalStorageId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error: Invalid storage_id: ${validated.storage_id}`,
+              },
+            ],
+            isError: true,
+          };
+        }
       }
-    }
 
-    let originalSystemId: string | undefined;
-    if (validated.system_id) {
-      originalSystemId = getOriginalUuid("system_id", validated.system_id);
-      if (!originalSystemId) {
-        throw new Error(`Invalid system_id: ${validated.system_id}`);
+      let originalSystemId: string | undefined;
+      if (validated.system_id) {
+        originalSystemId = getOriginalUuid("system_id", validated.system_id);
+        if (!originalSystemId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error: Invalid system_id: ${validated.system_id}`,
+              },
+            ],
+            isError: true,
+          };
+        }
       }
+
+      const tree = await intelxClient
+        .fileTreeView(validated.bucket, originalStorageId, originalSystemId)
+        .then(normalizeIntelxId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(tree),
+          },
+        ],
+        structuredContent: { tree } as Record<string, unknown>,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+          },
+        ],
+        isError: true,
+      };
     }
-
-    const tree = await intelxClient
-      .fileTreeView(validated.bucket, originalStorageId, originalSystemId)
-      .then(normalizeIntelxId);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(tree, null, 2),
-        },
-      ],
-      structuredContent: { tree } as Record<string, unknown>,
-    };
   },
 );
 
@@ -463,26 +656,49 @@ USE CASE: Discover related identifiers in a document to search for additional co
     },
   },
   async (params) => {
-    const validated = getSelectorsSchema.parse(params);
+    try {
+      const validated = getSelectorsSchema.parse(params);
 
-    const originalSystemId = getOriginalUuid("system_id", validated.system_id);
-    if (!originalSystemId) {
-      throw new Error(`Invalid system_id: ${validated.system_id}`);
+      const originalSystemId = getOriginalUuid(
+        "system_id",
+        validated.system_id,
+      );
+      if (!originalSystemId) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: Invalid system_id: ${validated.system_id}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const selectors = await intelxClient
+        .getSelectors(originalSystemId)
+        .then(normalizeSelectors);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: selectors.join(" "),
+          },
+        ],
+        structuredContent: { selectors } as Record<string, unknown>,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+          },
+        ],
+        isError: true,
+      };
     }
-
-    const selectors = await intelxClient
-      .getSelectors(originalSystemId)
-      .then(normalizeSelectors);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(selectors, null, 2),
-        },
-      ],
-      structuredContent: { selectors } as Record<string, unknown>,
-    };
   },
 );
 
@@ -494,19 +710,31 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const capabilities = await intelxClient
-      .getCapabilities()
-      .then(normalizeIntelxId);
+    try {
+      const capabilities = await intelxClient
+        .getCapabilities()
+        .then(normalizeIntelxId);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(capabilities, null, 2),
-        },
-      ],
-      structuredContent: capabilities,
-    };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(capabilities),
+          },
+        ],
+        structuredContent: capabilities,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -548,21 +776,53 @@ NOTE: Each line will limited to 64 characters. If you have interest in these fil
     },
   },
   async (params) => {
-    const validated = identitySearchSchema.parse(params);
-    const results = await identityClient
-      .search(validated)
-      .then(normalizeIdentityRecords)
-      .then(normalizeIntelxId);
+    try {
+      const validated = identitySearchSchema.parse(params);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(results, null, 2),
-        },
-      ],
-      structuredContent: { results } as Record<string, unknown>,
-    };
+      // Validate selector format - should be a domain for identity search
+      const isDomain =
+        /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/i.test(
+          validated.selector,
+        );
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(validated.selector);
+
+      if (!isDomain && !isEmail) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error: selector should be a domain or email address",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const results = await identityClient
+        .search(validated)
+        .then(normalizeIdentityRecords)
+        .then(normalizeIntelxId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(results),
+          },
+        ],
+        structuredContent: { results } as Record<string, unknown>,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -618,7 +878,7 @@ NOTE: Each line will limited to 64 characters. If you have interest in these fil
 //       content: [
 //         {
 //           type: "text",
-//           text: JSON.stringify(accounts, null, 2),
+//           text: JSON.stringify(accounts),
 //         },
 //       ],
 //       structuredContent: { accounts } as Record<string, unknown>,
@@ -634,19 +894,32 @@ server.registerResource(
     description: "Access Intelligence X search results by ID",
   },
   async (uri, { searchId }) => {
-    const results = await intelxClient
-      .getSearchResults(searchId as string, 100)
-      .then(normalizeIntelxId);
+    try {
+      const results = await intelxClient
+        .getSearchResults(searchId as string, 100)
+        .then(normalizeIntelxId);
 
-    return {
-      contents: [
-        {
-          uri: uri.href,
-          text: JSON.stringify(results, null, 2),
-          mimeType: "application/json",
-        },
-      ],
-    };
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(results),
+            mimeType: "application/json",
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+            mimeType: "text/plain",
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
@@ -664,25 +937,47 @@ server.registerResource(
     },
   },
   async (uri, { systemId, bucket }) => {
-    if (!systemId || !bucket) {
-      throw new Error("Missing required parameters");
+    try {
+      if (!systemId || !bucket) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Missing required parameters",
+              mimeType: "text/plain",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const data = await intelxClient.fileRead(
+        getOriginalUuid("system_id", +systemId) as string,
+        bucket as string,
+      );
+      const buffer = Buffer.from(data);
+
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            blob: buffer.toString("base64"),
+            mimeType: "application/octet-stream",
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+            mimeType: "text/plain",
+          },
+        ],
+        isError: true,
+      };
     }
-
-    const data = await intelxClient.fileRead(
-      getOriginalUuid("system_id", +systemId) as string,
-      bucket as string,
-    );
-    const buffer = Buffer.from(data);
-
-    return {
-      contents: [
-        {
-          uri: uri.href,
-          blob: buffer.toString("base64"),
-          mimeType: "application/octet-stream",
-        },
-      ],
-    };
   },
 );
 
@@ -700,26 +995,48 @@ server.registerResource(
     },
   },
   async (uri, { storageId, bucket }) => {
-    if (!storageId || !bucket) {
-      throw new Error("Missing required parameters");
+    try {
+      if (!storageId || !bucket) {
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: "Error: Missing required parameters",
+              mimeType: "text/plain",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const tree = await intelxClient
+        .fileTreeView(
+          bucket as string,
+          getOriginalUuid("storage_id", +storageId) as string,
+        )
+        .then(normalizeIntelxId);
+
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: JSON.stringify(tree),
+            mimeType: "application/json",
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
+            mimeType: "text/plain",
+          },
+        ],
+        isError: true,
+      };
     }
-
-    const tree = await intelxClient
-      .fileTreeView(
-        bucket as string,
-        getOriginalUuid("storage_id", +storageId) as string,
-      )
-      .then(normalizeIntelxId);
-
-    return {
-      contents: [
-        {
-          uri: uri.href,
-          text: JSON.stringify(tree, null, 2),
-          mimeType: "application/json",
-        },
-      ],
-    };
   },
 );
 
