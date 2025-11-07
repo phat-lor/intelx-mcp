@@ -21,12 +21,12 @@ export interface SearchResponse {
 }
 
 export interface SearchRecordNormalized {
-  systemid: string;
+  system_id: string;
   bucket: string;
   name: string;
 
   indexfile?: string;
-  storageid: string;
+  storage_id: string;
   media: number;
   type: number;
 
@@ -94,9 +94,11 @@ export interface TreeViewItem {
 }
 
 export interface Selector {
-  type: string;
-  value: string;
-  [key: string]: unknown;
+  systemid: string;
+  selector: string;
+  selectorh: string;
+  type: number;
+  typeh: string;
 }
 
 export interface CapabilitiesResponse {
@@ -129,8 +131,9 @@ export interface IdentityRecord {
 
 export interface IdentityNormalizedRecord {
   line: string;
-  systemid: string;
-  storageid: string;
+  system_id: string;
+  storage_id: string;
+  bucket: string;
   filename: string;
   date: string;
 }
@@ -142,11 +145,27 @@ export interface IdentitySearchResponse {
   [key: string]: unknown;
 }
 
+export interface AccountNormalizedRecord {
+  user: string;
+  password: string;
+  passwordtype: string;
+  source: string;
+  system_id: string;
+
+  date: string;
+  added: string;
+}
+
 export interface AccountRecord {
   user: string;
   password: string;
   passwordtype: string;
   sourceshort: string;
+  sourcelong: string;
+  systemid: string;
+
+  date: string;
+  added: string;
   [key: string]: unknown;
 }
 
